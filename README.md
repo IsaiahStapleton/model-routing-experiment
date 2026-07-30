@@ -2,29 +2,44 @@
 
 Does a small LLM classifier route requests to the cheapest adequate model tier better than a trivial heuristic, and is routing worth doing at all?
 
-Short answers: **yes it beats the heuristic**, and **no, routing does not pay off on this workload**. Details below.
+Short answers: **no, a tuned length heuristic beats it**, and **no, routing does not pay off on this workload either**. Details below.
 
 Run on an NVIDIA DGX Spark (GB10, 128 GB unified memory, arm64) serving three vLLM tiers behind a LiteLLM proxy, 2026-07-30.
 
 ## Result
 
-A strategy is only worth considering if nothing else is both cheaper and at least as accurate. On that Pareto frontier, cheapest first:
+**A tuned length heuristic beats the LLM classifier.** Counting prompt tokens routes at least as well as asking a 1.7B model to rate difficulty, and does it more cheaply.
+
+Compared at matched accuracy, with both strategies tuned over their own threshold grids on the same data:
+
+| accuracy | best heuristic | best classifier |
+|---|---|---|
+| 0.733 | `length(20,150)` **322.1 GPU-s** | `classifier(2,5)` 351.2 GPU-s |
+| 0.800 | `length(10,150)` **364.9 GPU-s** | cannot reach 0.800 |
+| 0.867 | (equals always-30b) 438.7 GPU-s | `classifier(1,5)` 438.7 GPU-s, which ignores the classifier and sends everything to the 30b |
+
+The Pareto frontier below 0.867 accuracy consists **entirely of length heuristics**. The classifier's only appearance on the frontier is a configuration that routes every request to qwen3-30b-a3b regardless of what the classifier said.
+
+Why: prompt length predicts difficulty about as well as the 1.7B's judgement on this corpus, and length is continuous while the classifier emits only two distinct values (EASY and MEDIUM, since it never emits HARD). Continuous input gives the heuristic finer control over the cost/accuracy tradeoff.
+
+### And routing itself does not pay off
+
+Separately from which router is better, routing at all loses to doing nothing clever:
 
 | strategy | accuracy | GPU-seconds |
 |---|---|---|
-| always qwen3-1.7b | 0.467 | 147.3 |
-| length heuristic | 0.533 | 244.8 |
-| **classifier (2,5)** EASY to 1.7b, MEDIUM to 30b | 0.733 | 351.2 |
 | always qwen3-30b-a3b | 0.867 | 438.7 |
-| oracle (cheapest adequate) | 1.000 | 489.4 |
+| oracle (cheapest adequate, unattainable) | 1.000 | 489.4 |
 
-Dominated, and therefore not worth using: random (0.800, 687.6), always gpt-oss-120b (0.867, 1180.2), classifier (2,3) (0.767, 1115.9), classifier (1,2) (0.900, 1203.3).
+Perfect routing costs 489.4 GPU-seconds against 438.7 for simply always using qwen3-30b-a3b, so even an oracle is 1.12x the cost of the simplest strategy. No routing configuration is both cheaper and more accurate than always-30b.
 
-**The classifier beats the length heuristic.** 20.0 percentage points more accuracy for 43% more cost, and it buys accuracy at 532 GPU-seconds per point against the heuristic's 1477, roughly 2.8x more efficient.
+Routing fails here because of the workload: the cheap tier is adequate only 43.8% of the time, and 4 of 32 items are adequate *only* on gpt-oss-120b, so an optimal router must pay for the expensive tier precisely where it hurts. A workload with more easy traffic would change this.
 
-**But routing does not pay off here.** Perfect routing costs 489.4 GPU-seconds against 438.7 for simply always using qwen3-30b-a3b, so an optimal router is 1.12x the cost of the simplest possible strategy. No configuration is both cheaper and more accurate than always-30b. The recommendation is to use qwen3-30b-a3b for everything and not build a router.
+**Recommendation: use qwen3-30b-a3b for everything. Do not build a router, and if you ever do, use prompt length rather than an LLM classifier.**
 
-Routing fails here because of the workload, not the classifier: the cheap tier is adequate only 43.8% of the time, and 4 of 32 items are adequate *only* on gpt-oss-120b, so an optimal router must pay for the expensive tier precisely where it hurts. A workload with more easy traffic would change this.
+### A correction worth recording
+
+An earlier version of this README claimed the classifier beat the heuristic by 20 percentage points. That comparison was **unfair and wrong**: the classifier had been tuned across a 36-cell threshold grid while the heuristic used a single hand-picked configuration. Tuning both on the same data reverses the conclusion. `fair_baseline.py` reproduces the corrected comparison.
 
 ## Per-tier behaviour
 
@@ -40,7 +55,7 @@ Router overhead is negligible: the classifier call takes 57 ms against 10.3 s of
 
 ## Classifier capability ceiling
 
-qwen3-1.7b separates trivial from non-trivial reliably (Spearman rho 0.828 against hand-assigned ordinal truth, holding on a held-out set) but **cannot separate moderate from hard** and never emits the top category. In practice it only ever outputs EASY or MEDIUM, mapped to scores 2 and 5, which collapses the 36-cell threshold grid to four functionally distinct behaviours.
+qwen3-1.7b separates trivial from non-trivial reliably (Spearman rho 0.828 against hand-assigned ordinal truth, holding on a held-out set) but **cannot separate moderate from hard**, which is a large part of why prompt length outperforms it: length varies continuously while the classifier collapses every request into one of two buckets and never emits the top category. In practice it only ever outputs EASY or MEDIUM, mapped to scores 2 and 5, which collapses the 36-cell threshold grid to four functionally distinct behaviours.
 
 An earlier prompt variant appeared to fix this, lifting rho to 0.898 with the top category emitted 3 times. It contained the line "if the task contains the words derive, prove, design ... it is HARD", and the hard probe items began with exactly those words. On a held-out set with none of that vocabulary the advantage vanished completely (rho 0.828, top category emitted 0 times). That variant was **rejected as test-set leakage**.
 
