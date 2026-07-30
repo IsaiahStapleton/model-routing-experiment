@@ -15,12 +15,19 @@ CLASSIFIER_MODEL = "qwen3-1.7b"
 MAX_TASK_CHARS = 6000
 
 _INSTRUCTIONS = (
-    "Rate how difficult this task is for a language model, from 1 to 10.\n"
-    "1 means trivial (arithmetic, greetings, simple lookups).\n"
-    "5 means moderate (short code, summarising, routine explanation).\n"
-    "10 means very hard (multi-step reasoning, subtle debugging, deep analysis).\n"
-    "Answer with the number only, no words."
+    "Classify this task as EASY, MEDIUM, or HARD.\n"
+    "EASY = trivial facts, arithmetic, greetings.\n"
+    "MEDIUM = short code, routine explanation.\n"
+    "HARD = multi-step reasoning, derivation, subtle debugging.\n"
+    "Answer with one word only."
 )
+
+# Word categories map onto the same 1-10 scale parse_score has always
+# returned, chosen so the default policy.decide() thresholds (3, 7) still
+# route EASY to the cheap tier, MEDIUM to the mid tier, and HARD to the
+# expensive tier without any change to policy.py.
+_WORD_SCORES = {"EASY": 2, "MEDIUM": 5, "HARD": 9}
+_WORD_RE = re.compile(r"\b(EASY|MEDIUM|HARD)\b", re.IGNORECASE)
 
 
 def build_prompt(user_msg: str, tool_names: list[str]) -> str:
@@ -34,6 +41,10 @@ def parse_score(message: dict) -> int | None:
 
     Thinking-capable models may return an empty content field with the answer
     in reasoning_content, so fall back to it rather than reporting failure.
+
+    Checks the EASY/MEDIUM/HARD category words first (case-insensitively),
+    since that is what the classifier prompt now asks for, then falls back
+    to the original bare-integer parsing for backward compatibility.
     """
     if not isinstance(message, dict):
         return None
@@ -41,7 +52,11 @@ def parse_score(message: dict) -> int | None:
         text = message.get(field)
         if not text:
             continue
-        match = re.search(r"(?<!-)\b(10|[1-9])\b", str(text))
+        text = str(text)
+        word_match = _WORD_RE.search(text)
+        if word_match:
+            return _WORD_SCORES[word_match.group(1).upper()]
+        match = re.search(r"(?<!-)\b(10|[1-9])\b", text)
         if match:
             return int(match.group(1))
     return None

@@ -54,3 +54,31 @@ def test_parse_handles_empty_and_missing():
     assert parse_score({"content": ""}) is None
     assert parse_score({}) is None
     assert parse_score({"content": None}) is None
+
+
+def test_parse_word_categories():
+    assert parse_score({"content": "EASY"}) == 2
+    assert parse_score({"content": "MEDIUM"}) == 5
+    assert parse_score({"content": "HARD"}) == 9
+
+
+def test_parse_word_is_case_insensitive():
+    assert parse_score({"content": "medium"}) == 5
+
+
+def test_parse_word_wins_over_stray_number():
+    # a reply like "HARD (9/10)" must not be read as some other number
+    assert parse_score({"content": "HARD (9/10)"}) == 9
+
+
+def test_numeric_fallback_still_works():
+    assert parse_score({"content": "7"}) == 7
+    assert parse_score({"content": "-5"}) is None
+    assert parse_score({"content": "42"}) is None
+
+
+def test_prompt_asks_for_category():
+    p = build_prompt("what is 2+2", ["bash"])
+    assert "EASY" in p and "MEDIUM" in p and "HARD" in p
+    assert "bash" in p
+    assert "what is 2+2" in p
