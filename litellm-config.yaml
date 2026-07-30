@@ -1,0 +1,24 @@
+model_list:
+  - model_name: gpt-oss-120b
+    litellm_params:
+      model: hosted_vllm/gpt-oss-120b
+      api_base: http://vllm-gptoss120b:8000/v1
+      api_key: none
+  - model_name: qwen3-30b-a3b
+    litellm_params:
+      model: hosted_vllm/qwen3-30b-a3b
+      api_base: http://vllm-qwen3-30b:8000/v1
+      api_key: none
+  - model_name: qwen3-1.7b
+    litellm_params:
+      model: hosted_vllm/qwen3-1.7b
+      api_base: http://vllm-qwen3-1_7b:8000/v1
+      api_key: none
+  # qwen3-4b (5 GB weights) does not fit alongside the two large tiers; the 1.7B
+  # FP8 triage tier replaces it. Re-add the 4B only if you drop a larger tier.
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true
