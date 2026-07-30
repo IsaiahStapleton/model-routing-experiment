@@ -41,7 +41,7 @@ def parse_score(message: dict) -> int | None:
         text = message.get(field)
         if not text:
             continue
-        match = re.search(r"\b(10|[1-9])\b", str(text))
+        match = re.search(r"(?<!-)\b(10|[1-9])\b", str(text))
         if match:
             return int(match.group(1))
     return None

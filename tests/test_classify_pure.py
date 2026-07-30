@@ -45,6 +45,11 @@ def test_parse_rejects_garbage():
     assert parse_score({"content": "banana"}) is None
 
 
+def test_parse_rejects_negative_numbers():
+    assert parse_score({"content": "-5"}) is None
+    assert parse_score({"content": "I'd say -3"}) is None
+
+
 def test_parse_handles_empty_and_missing():
     assert parse_score({"content": ""}) is None
     assert parse_score({}) is None
