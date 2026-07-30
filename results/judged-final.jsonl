@@ -1,0 +1,32 @@
+{"id": "syn-e01", "user_msg": "What is 17 times 23?", "tool_names": [], "prompt_tokens": 5, "source": "synthetic"}
+{"id": "syn-e02", "user_msg": "What is the capital of Japan?", "tool_names": [], "prompt_tokens": 7, "source": "synthetic"}
+{"id": "syn-e03", "user_msg": "Convert 45 degrees Celsius to Fahrenheit.", "tool_names": [], "prompt_tokens": 10, "source": "synthetic"}
+{"id": "syn-e04", "user_msg": "Spell the word 'necessary' backwards.", "tool_names": [], "prompt_tokens": 9, "source": "synthetic"}
+{"id": "syn-e05", "user_msg": "How many days are in a leap year?", "tool_names": [], "prompt_tokens": 8, "source": "synthetic"}
+{"id": "syn-e06", "user_msg": "Give me a one-word synonym for 'rapid'.", "tool_names": [], "prompt_tokens": 9, "source": "synthetic"}
+{"id": "syn-e07", "user_msg": "What does the acronym CPU stand for?", "tool_names": [], "prompt_tokens": 9, "source": "synthetic"}
+{"id": "syn-e08", "user_msg": "Is 91 a prime number? Answer yes or no.", "tool_names": [], "prompt_tokens": 9, "source": "synthetic"}
+{"id": "syn-e09", "user_msg": "List the days of the week.", "tool_names": [], "prompt_tokens": 6, "source": "synthetic"}
+{"id": "syn-e10", "user_msg": "What year did the first moon landing happen?", "tool_names": [], "prompt_tokens": 11, "source": "synthetic"}
+{"id": "syn-m01", "user_msg": "Write a bash one-liner that finds all files over 100MB under /var and prints their sizes.", "tool_names": ["bash"], "prompt_tokens": 22, "source": "synthetic"}
+{"id": "syn-m02", "user_msg": "Summarise what a Kubernetes NetworkPolicy does in three sentences.", "tool_names": [], "prompt_tokens": 16, "source": "synthetic"}
+{"id": "syn-m03", "user_msg": "Write a Python function that returns the nth Fibonacci number iteratively.", "tool_names": [], "prompt_tokens": 18, "source": "synthetic"}
+{"id": "syn-m04", "user_msg": "Explain the difference between a ClusterIP and a NodePort Service.", "tool_names": [], "prompt_tokens": 16, "source": "synthetic"}
+{"id": "syn-m05", "user_msg": "Write a regex that matches an ISO 8601 date and explain each part.", "tool_names": [], "prompt_tokens": 16, "source": "synthetic"}
+{"id": "syn-m06", "user_msg": "What is the difference between FP8 and MXFP4 quantization?", "tool_names": [], "prompt_tokens": 14, "source": "synthetic"}
+{"id": "syn-m07", "user_msg": "Given a 4 GiB KV cache and 96 KB per token, how many tokens fit? Show the arithmetic.", "tool_names": [], "prompt_tokens": 21, "source": "synthetic"}
+{"id": "syn-m08", "user_msg": "Write a SQL query returning the top 5 customers by total order value.", "tool_names": [], "prompt_tokens": 17, "source": "synthetic"}
+{"id": "syn-m09", "user_msg": "Explain what mixture-of-experts routing is and why it reduces compute per token.", "tool_names": [], "prompt_tokens": 20, "source": "synthetic"}
+{"id": "syn-m10", "user_msg": "Describe how mutual TLS differs from ordinary TLS.", "tool_names": [], "prompt_tokens": 12, "source": "synthetic"}
+{"id": "syn-h01", "user_msg": "A vLLM engine fails with 'No available memory for the cache blocks' at 0.28 utilization but works at 0.29. Explain precisely why, and what that implies about the relationship between weights, pool size and KV cache.", "tool_names": ["read_file", "bash"], "prompt_tokens": 53, "source": "synthetic"}
+{"id": "syn-h02", "user_msg": "Design a scheme for routing requests across three model tiers that provably never sends a prompt to a model whose context cannot hold it, and prove the invariant holds under classifier failure.", "tool_names": [], "prompt_tokens": 48, "source": "synthetic"}
+{"id": "syn-h03", "user_msg": "Two routers are connected by mutual TLS yet an application request crossing that link carries no identity. Explain the security consequence and how you would close it without breaking the link.", "tool_names": [], "prompt_tokens": 48, "source": "synthetic"}
+{"id": "syn-h04", "user_msg": "Given decode throughputs of 33.6, 55.2 and 93.1 tok/s across three tiers, derive a cost metric that permits fair comparison on owned hardware, and state what it understates.", "tool_names": [], "prompt_tokens": 43, "source": "synthetic"}
+{"id": "syn-h05", "user_msg": "An agent asks the user for its own name despite having a populated identity file in its prompt. Enumerate the possible root causes in order of likelihood and describe how to distinguish them.", "tool_names": ["read_file"], "prompt_tokens": 47, "source": "synthetic"}
+{"id": "syn-h06", "user_msg": "Explain why disabling CUDA graph capture in an inference server can increase total memory usage even though the graphs themselves consume memory.", "tool_names": [], "prompt_tokens": 36, "source": "synthetic"}
+{"id": "syn-h07", "user_msg": "Derive the memory bandwidth ceiling for decoding a mixture-of-experts model with 5.1B active parameters at 4-bit on 273 GB/s, and explain why measured throughput is far below it.", "tool_names": [], "prompt_tokens": 44, "source": "synthetic"}
+{"id": "syn-h08", "user_msg": "You must label which of three model tiers was adequate for each prompt, using an LLM judge. Identify the biases this introduces and design a protocol that mitigates each one.", "tool_names": [], "prompt_tokens": 43, "source": "synthetic"}
+{"id": "syn-h09", "user_msg": "Write a Python function that merges overlapping intervals in O(n log n), prove its correctness by loop invariant, and give the failing case for a naive O(n) attempt.", "tool_names": [], "prompt_tokens": 41, "source": "synthetic"}
+{"id": "syn-h10", "user_msg": "A forward proxy injects credentials by matching the Host header, but requests to in-cluster .svc names bypass it. Explain the failure mode end to end and give two fixes with their tradeoffs.", "tool_names": [], "prompt_tokens": 47, "source": "synthetic"}
+{"id": "real-00010", "user_msg": "[cron:bc9a0e67-736e-4829-90e1-dd790c46d145 memory-git-push] Run the memory git push routine: cd /home/node/.openclaw/workspace && git add -A && if ! git diff --cached --quiet; then git commit -m \"Memory sync $(date -u +%Y-%m-%dT%H:%M:%SZ)\" && git push origin main && echo 'Pushed memory changes to GitHub'; else echo 'No changes to push'; fi\nCurrent time: Saturday, June 20th, 2026 - 3:02 PM (UTC)\nReference UTC: 2026-06-20 15:02 UTC", "tool_names": [], "prompt_tokens": 108, "source": "real"}
+{"id": "real-02406", "user_msg": "testing, what model are you using?", "tool_names": [], "prompt_tokens": 8, "source": "real"}

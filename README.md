@@ -1,118 +1,114 @@
-# Isaiah's model routing lab (dgx-spark-4)
+# Intelligent model routing on a DGX Spark
 
-Three vLLM tiers behind a LiteLLM proxy, exposed to the `isaiah-claw` OpenShift namespace over Skupper.
+Does a small LLM classifier route requests to the cheapest adequate model tier better than a trivial heuristic, and is routing worth doing at all?
 
-## Layout
+Short answers: **yes it beats the heuristic**, and **no, routing does not pay off on this workload**. Details below.
 
-| Component | Port (loopback) | Pool | Context | Notes |
-|---|---|---|---|---|
-| gpt-oss-120b | 8001 | 0.60 | 32k | MoE 5.1B active, MXFP4, 1.80x concurrency |
-| qwen3-30b-a3b | 8002 | 0.29 | 32k | MoE 3B active, FP8, 1.13x concurrency |
-| qwen3-1.7b | 8004 | 0.030 | **4k** | FP8, triage/router tier only, NOT an agent model |
-| qwen3-4b | 8003 | - | - | stopped: 5 GB of weights does not fit |
-| LiteLLM | 4000 | - | - | one OpenAI-compatible endpoint, bearer auth |
-| skupper router | host net | - | - | docker site `spark-box`, connector to 127.0.0.1:4000 |
+Run on an NVIDIA DGX Spark (GB10, 128 GB unified memory, arm64) serving three vLLM tiers behind a LiteLLM proxy, 2026-07-30.
 
-Everything binds to 127.0.0.1 only. The bearer token lives in `.env` (mode 600) and is mirrored into the cluster Secret `spark-models-api-key`.
+## Result
 
-## All three tiers fit, but the box runs at 98% memory
+A strategy is only worth considering if nothing else is both cheaper and at least as accurate. On that Pareto frontier, cheapest first:
 
-Verified under concurrent load: 18k-token prompts to both large tiers plus a hit on the triage tier all succeeded, with peak usage **120,598 MB of 122,502 (98.4%)**. It works, but the margin is ~1.9 GB. This is a **shared** machine, so an OOM could kill someone else's job, not just a tier here. If anyone else starts using the box, drop a tier.
+| strategy | accuracy | GPU-seconds |
+|---|---|---|
+| always qwen3-1.7b | 0.467 | 147.3 |
+| length heuristic | 0.533 | 244.8 |
+| **classifier (2,5)** EASY to 1.7b, MEDIUM to 30b | 0.733 | 351.2 |
+| always qwen3-30b-a3b | 0.867 | 438.7 |
+| oracle (cheapest adequate) | 1.000 | 489.4 |
 
-Weights alone account for 92.3 GiB of the 119.6 GiB:
+Dominated, and therefore not worth using: random (0.800, 687.6), always gpt-oss-120b (0.867, 1180.2), classifier (2,3) (0.767, 1115.9), classifier (1,2) (0.900, 1203.3).
 
-| | weights |
+**The classifier beats the length heuristic.** 20.0 percentage points more accuracy for 43% more cost, and it buys accuracy at 532 GPU-seconds per point against the heuristic's 1477, roughly 2.8x more efficient.
+
+**But routing does not pay off here.** Perfect routing costs 489.4 GPU-seconds against 438.7 for simply always using qwen3-30b-a3b, so an optimal router is 1.12x the cost of the simplest possible strategy. No configuration is both cheaper and more accurate than always-30b. The recommendation is to use qwen3-30b-a3b for everything and not build a router.
+
+Routing fails here because of the workload, not the classifier: the cheap tier is adequate only 43.8% of the time, and 4 of 32 items are adequate *only* on gpt-oss-120b, so an optimal router must pay for the expensive tier precisely where it hurts. A workload with more easy traffic would change this.
+
+## Per-tier behaviour
+
+| tier | adequate | cost per answer | notes |
+|---|---|---|---|
+| gpt-oss-120b | 26/32 (81.2%) | 43.5 GPU-s | MoE, 5.1B active, MXFP4, 32k context |
+| qwen3-30b-a3b | 26/32 (81.2%) | 15.1 GPU-s | MoE, 3B active, FP8, 32k context |
+| qwen3-1.7b | 14/32 (43.8%) | 5.1 GPU-s | FP8, 4k context, also serves as the classifier |
+
+The two large tiers tie in aggregate but are **complementary, not interchangeable**: 4 items are adequate only on gpt-oss (syn-e04, syn-h02, syn-h05, syn-h09) and 4 different ones only on qwen3-30b (syn-m05, syn-m07, syn-m09, real-02406). That is why an oracle needs both and ends up costing more than either alone.
+
+Router overhead is negligible: the classifier call takes 57 ms against 10.3 s of serving on qwen3-30b and 32.0 s on gpt-oss, so 0.2 to 0.6% of end-to-end latency. Routing is rejected on cost economics, not on overhead.
+
+## Classifier capability ceiling
+
+qwen3-1.7b separates trivial from non-trivial reliably (Spearman rho 0.828 against hand-assigned ordinal truth, holding on a held-out set) but **cannot separate moderate from hard** and never emits the top category. In practice it only ever outputs EASY or MEDIUM, mapped to scores 2 and 5, which collapses the 36-cell threshold grid to four functionally distinct behaviours.
+
+An earlier prompt variant appeared to fix this, lifting rho to 0.898 with the top category emitted 3 times. It contained the line "if the task contains the words derive, prove, design ... it is HARD", and the hard probe items began with exactly those words. On a held-out set with none of that vocabulary the advantage vanished completely (rho 0.828, top category emitted 0 times). That variant was **rejected as test-set leakage**.
+
+## How it works
+
+```
+corpus.py    build a judged corpus (self-contained items, gradeable from the task alone)
+             and a guardrail corpus (real agent turns, used only to test the context guard)
+dual_run.py  run every judged item on every tier, recording answers, tokens, latency
+judge.py     label each answer ADEQUATE or INADEQUATE using gpt-5.5
+sweep.py     replay policy.decide() across a threshold grid, compare against baselines
+```
+
+`router/policy.py` holds `decide(score, prompt_tokens, thresholds)`, a pure function with no I/O. Both the offline sweep and any future live router import the same function, so a threshold chosen from the results is literally the code that would run in production.
+
+Two guardrails override the classifier: a failed classification falls back to qwen3-30b-a3b, and a request whose prompt plus 1024 tokens of output headroom exceeds a tier's context is promoted to the smallest tier that fits.
+
+## Reproducing
+
+Requires three vLLM tiers behind a LiteLLM proxy at `127.0.0.1:4000` with the key in `.env` as `LITELLM_MASTER_KEY`, plus a way to reach gpt-5.5 for judging.
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pytest -q                       # 67 tests
+
+.venv/bin/python -m eval.corpus eval/synthetic.json <real-turns.jsonl or -> eval/out
+.venv/bin/python -m eval.dual_run eval/out/judged-final.jsonl eval/out/answers.jsonl
+python3 eval/judge.py eval/out/judged-final.jsonl eval/out/answers.jsonl eval/out/labels.jsonl
+.venv/bin/python -m eval.sweep eval/out
+```
+
+`judge.py` is stdlib-only because it runs wherever the judging credential lives, which in the original setup was inside a Kubernetes pod rather than on the Spark.
+
+`docker-compose.yml` and `litellm-config.yaml` are the tier definitions used for the run. See `LAB.md` for the memory tuning, including the load-order constraint: vLLM checks free memory at startup, so the largest model must be started first.
+
+## Data in `results/`
+
+| file | contents |
 |---|---|
-| gpt-oss-120b (MXFP4) | 60.8 GiB |
-| qwen3-30b-a3b (FP8) | 29.0 GiB |
-| qwen3-1.7b (FP8) | 2.5 GiB |
+| `judged-final.jsonl` | the 32 corpus items actually evaluated |
+| `answers.jsonl` | 96 answers (32 items x 3 tiers), all complete, no empties |
+| `labels.jsonl` | 96 adequacy labels from gpt-5.5 |
+| `scores.jsonl` | classifier score per item |
+| `results.md` | the full threshold sweep table |
+| `guardrail-sanitised.jsonl` | guardrail corpus with message text redacted, see below |
 
-Measured overheads that `--gpu-memory-utilization` does **not** cover: ~2.7 GiB OS/docker/litellm/skupper baseline, plus ~1-2 GiB per vLLM engine outside its pool.
+## Privacy
 
-Two configurations with real headroom, if you want them:
+`guardrail-sanitised.jsonl` has had its message text replaced. The original contained real agent session content including conversation fragments, internal cron UUIDs, and workspace paths. Only `prompt_tokens` is used by the guardrail tests, so redaction costs nothing.
 
-- **gpt-oss-120b + qwen3-30b-a3b only** — both at full 32k, ~7 GB free.
-- **qwen3-30b + 4b + 1.7b (drop gpt-oss)** — ~40 GiB total, ~75 GiB free, generous context everywhere.
+The raw 58 MB session dump (`real-turns.jsonl`) is gitignored and must never be committed.
 
-## Sizing rules learned the hard way
+`judged-final.jsonl` retains two real items, both innocuous: an automated git-push cron prompt and the question "testing, what model are you using?". **Review these before publishing this repository publicly.**
 
-- **Read the concurrency line, not just pass/fail.** `Maximum concurrency for N tokens per request: 1.01x` means it fit by luck and will fail after any unrelated change. Aim for >1.1x.
-- **A pool cannot go below weights + KV + activations.** qwen3-30b's 29.0 GiB of weights put a hard floor near 0.28; 0.245 left 0.27 GiB and could not allocate a single cache block.
-- **`--kv-cache-dtype fp8` does NOT free memory.** It doubles tokens-per-byte, so it only helps when you have spare pool. It needs *more* room during init and made qwen3-30b fail to start at a pool size that worked without it.
-- **Untried lever:** `--enforce-eager` on gpt-oss would free several GiB of CUDA graph memory at a real throughput cost.
+## Limitations
 
-## Tool calling needs an explicit parser per model family
+These bound what the numbers support, and they matter:
 
-vLLM will not emit `tool_calls` without one, and it fails **silently**: the response comes back 200 with empty content and no tool calls, which an agent reports as a generic failure. Each family needs its own parser:
+- 32 items, of which 2 have no adequate tier anywhere, so every row is n=30. One item flipping moves accuracy by ~3.3 points, so differences under about 7 points are not meaningful.
+- The judged corpus is 30 synthetic items plus only 2 real ones. The real agent traffic sampled proved to be 57 copies of one cron job plus one throwaway question, carrying almost no diversity, so it was deduplicated.
+- One sample per tier per item at temperature 0. Variance is unmeasured.
+- Binary adequate/inadequate labels, no graded quality scale.
+- Cost is decode-only GPU-seconds and ignores prefill, which understates long prompts.
+- qwen3-1.7b was evaluated with thinking disabled while gpt-oss reasoned freely, because the cheap tier exists to be fast. This understates what the 1.7b could achieve.
+- 3 of 96 answers hit the 4000-token ceiling and were truncated; all 3 were judged inadequate.
+- 1 of 96 labels remains null after retries and is treated as not-adequate.
+- The judge is gpt-5.5, which is not a candidate tier, so there is no self-preference bias. But it saw only the task and the answer, not the full context the serving model had.
 
-| model | flags |
-|---|---|
-| gpt-oss-120b | `--enable-auto-tool-choice --tool-call-parser openai` |
-| qwen3-* | `--enable-auto-tool-choice --tool-call-parser hermes` |
+## Incidental finding
 
-`openai` is the registered name for `OpenAIToolParser`, which handles gpt-oss's harmony format. Note that gpt-oss's *reasoning* is parsed automatically without a `--reasoning-parser` flag, so seeing `reasoning_content` come back is not evidence that tool calling works.
-
-Always verify with a payload that actually carries `tools`. A short "reply with one word" prompt passes even when tool calling is completely broken.
-
-## Context length: OpenClaw needs 32k minimum
-
-Do not trim `--max-model-len` below 32768 for any tier an OpenClaw agent will call. Its system prompt plus tool definitions is **23,493 tokens** before any conversation history, so a 16k limit fails every request with a vLLM 400:
-
-```
-ValueError: Input length (23493) exceeds model's maximum context length (16384)
-```
-
-Agent-side this surfaces only as "The agent run failed before producing a reply", so check the vLLM or LiteLLM logs rather than the agent's message.
-
-Raising `--max-model-len` does **not** enlarge the reserved pool; it only changes how vLLM carves the existing KV cache. Check the startup line `GPU KV cache size: N tokens` — as long as N exceeds your `--max-model-len`, the engine will start. Qwen3-30B had 37,392 tokens of KV at `0.26`, so it moved from 16k to 32k with no memory change at all. Lower `--max-num-seqs` if you need to trade concurrency for context.
-
-There are two distinct failure modes for memory, and they need opposite fixes:
-
-- `Free memory ... less than desired GPU memory utilization` — it cannot reserve its pool. Fix the load order, or lower the fraction.
-- `No available memory for the cache blocks` — the pool fits the weights but leaves no KV cache. Fix by *raising* the fraction or lowering `--max-model-len`.
-
-```
-docker compose up -d --no-deps vllm-gptoss120b   # wait for /health, ~8 min
-docker compose up -d --no-deps vllm-qwen3-30b    # wait for /health
-docker compose up -d --no-deps litellm
-```
-
-## Usage
-
-```
-K=$(grep -oP '(?<=LITELLM_MASTER_KEY=).*' .env)
-curl -s http://127.0.0.1:4000/v1/models -H "Authorization: Bearer $K"
-curl -s http://127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $K" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3-30b-a3b","messages":[{"role":"user","content":"hi"}]}'
-```
-
-## Skupper
-
-The cluster cannot dial in (the Spark is on a private network), so the Spark holds an outbound mTLS link to the cluster's inter-router Route on 443. In the cluster this surfaces as Service `spark-models:4000` in namespace `isaiah-claw`.
-
-Status commands:
-
-```
-SKUPPER_PLATFORM=docker skupper site status
-SKUPPER_PLATFORM=docker skupper connector status
-```
-
-Note: the non-kube CLI reports link/connector status unreliably (it showed `Pending / Not Operational` while the link was demonstrably carrying traffic). Trust the cluster side (`oc get site spark-lab -n isaiah-claw`) and the router logs instead.
-
-If the Spark router is recreated (`skupper system reload` regenerates its router identity), the cluster router can hold a stale link-state record and refuse to route. The fix is to restart the cluster router pod:
-
-```
-oc delete pod -n isaiah-claw -l skupper.io/component=router
-```
-
-## Downloading more models
-
-Use `HF_HUB_DISABLE_XET=1`. The xet transfer backend stalled silently partway through both large downloads (bytes flatlined while the process stayed alive). Plain HTTPS sustained ~90 MB/s.
-
-For repos carrying multiple checkpoint formats, exclude what vLLM does not need via `snapshot_download(..., ignore_patterns=[...])` rather than the CLI's `--exclude`, whose trailing patterns get misparsed as positional filenames.
-
-## Known box issues
-
-- The system clock is ~8 hours ahead of real UTC and `System clock synchronized: no`. Fixing it needs root. Container log timestamps and any traces emitted from this box will be wrong until then.
-- Docker has the NVIDIA container toolkit installed but never registered as a runtime, so `runtime: nvidia` fails. The compose file uses `gpus: all` instead, which works without root.
+The item "Spell the word 'necessary' backwards" sent qwen3-30b-a3b into a 4000-token decode loop costing 72.5 GPU-seconds, and it was judged inadequate. gpt-oss-120b answered the same prompt in 126 tokens. A trivial character-manipulation task defeating the mid tier through a degenerate loop is worth investigating separately.

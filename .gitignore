@@ -3,6 +3,11 @@ __pycache__/
 *.pyc
 .env
 spark-link-token.yaml
-router/decisions.jsonl
-eval/out/
 .sdd/
+
+# Working directory for a live run. Results committed under results/ instead.
+eval/out/
+
+# Never commit: raw podling session dumps contain real conversation content
+**/real-turns.jsonl
+*.bak
