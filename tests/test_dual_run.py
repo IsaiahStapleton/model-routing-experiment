@@ -1,6 +1,6 @@
 import json
 
-from eval.dual_run import already_done, build_body, tier_can_serve
+from eval.dual_run import already_done, answer_budget, build_body, tier_can_serve
 
 
 def test_small_tier_rejects_oversized_prompt():
@@ -31,9 +31,26 @@ def test_already_done_handles_missing_file(tmp_path):
 
 
 def test_build_body_disables_thinking():
-    body = build_body("qwen3-1.7b", "hello")
-    assert body["model"] == "qwen3-1.7b"
+    body = build_body("qwen3-30b-a3b", "hello", 500)
+    assert body["model"] == "qwen3-30b-a3b"
     assert body["messages"] == [{"role": "user", "content": "hello"}]
-    assert body["max_tokens"] == 400
+    assert body["max_tokens"] == 4000
     assert body["temperature"] == 0
     assert body["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_answer_budget_respects_small_tier_context():
+    # 4096 context, so a 97-token prompt cannot also take 4000 output
+    b = answer_budget("qwen3-1.7b", 97)
+    assert b <= 4096 - 97 - 128
+    assert b >= 256
+
+
+def test_answer_budget_uses_full_budget_on_large_tiers():
+    assert answer_budget("gpt-oss-120b", 500) == 4000
+    assert answer_budget("qwen3-30b-a3b", 500) == 4000
+
+
+def test_answer_budget_never_returns_below_minimum():
+    # even an absurd prompt yields a usable floor rather than zero or negative
+    assert answer_budget("qwen3-1.7b", 5000) == 256

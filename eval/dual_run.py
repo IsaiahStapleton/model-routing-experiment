@@ -14,7 +14,17 @@ import urllib.request
 from router.policy import OUTPUT_HEADROOM, TIER_CONTEXT, TIER_ORDER
 
 API_BASE = "http://127.0.0.1:4000/v1"
-MAX_ANSWER_TOKENS = 400
+# 4000 is the budget at which all three tiers reach finish_reason=stop on
+# their own (gpt-oss-120b needs ~2876 tokens on hard items); below that, the
+# harness itself truncates mid-reasoning or mid-answer for every tier. It is
+# a ceiling, not a flat allocation: answer_budget() below caps it per tier so
+# prompt + output never exceeds that tier's context window (qwen3-1.7b's
+# context is only 4096, smaller than this ceiling on its own).
+MAX_ANSWER_TOKENS = 4000
+# Tokeniser estimate error (corpus prompt_tokens is chars//4) plus
+# chat-template overhead not captured by that estimate.
+SAFETY_MARGIN = 128
+MIN_ANSWER_TOKENS = 256
 REQUEST_TIMEOUT = 300.0
 
 
@@ -43,11 +53,16 @@ def already_done(path: str) -> set:
     return done
 
 
-def build_body(tier: str, user_msg: str) -> dict:
+def answer_budget(tier: str, prompt_tokens: int) -> int:
+    room = TIER_CONTEXT[tier] - prompt_tokens - SAFETY_MARGIN
+    return max(MIN_ANSWER_TOKENS, min(MAX_ANSWER_TOKENS, room))
+
+
+def build_body(tier: str, user_msg: str, prompt_tokens: int) -> dict:
     return {
         "model": tier,
         "messages": [{"role": "user", "content": user_msg}],
-        "max_tokens": MAX_ANSWER_TOKENS,
+        "max_tokens": answer_budget(tier, prompt_tokens),
         "temperature": 0,
         # Without this, hybrid-thinking tiers spend the whole answer-token
         # budget reasoning and return empty content.
@@ -55,8 +70,8 @@ def build_body(tier: str, user_msg: str) -> dict:
     }
 
 
-def ask(tier: str, user_msg: str, key: str) -> dict:
-    body = build_body(tier, user_msg)
+def ask(tier: str, user_msg: str, key: str, prompt_tokens: int) -> dict:
+    body = build_body(tier, user_msg, prompt_tokens)
     req = urllib.request.Request(
         f"{API_BASE}/chat/completions",
         data=json.dumps(body).encode(),
@@ -94,7 +109,8 @@ def main(judged_path: str, out_path: str) -> None:
                               "latency_s": 0.0, "status": "skipped_context"}
                 else:
                     try:
-                        record = {"id": item["id"], "tier": tier, **ask(tier, item["user_msg"], key)}
+                        record = {"id": item["id"], "tier": tier,
+                                  **ask(tier, item["user_msg"], key, item["prompt_tokens"])}
                     except Exception as exc:
                         record = {"id": item["id"], "tier": tier, "answer": "",
                                   "completion_tokens": 0, "prompt_tokens": 0,
