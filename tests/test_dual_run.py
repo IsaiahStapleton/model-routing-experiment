@@ -1,6 +1,6 @@
 import json
 
-from eval.dual_run import already_done, tier_can_serve
+from eval.dual_run import already_done, build_body, tier_can_serve
 
 
 def test_small_tier_rejects_oversized_prompt():
@@ -28,3 +28,12 @@ def test_already_done_reads_existing_pairs(tmp_path):
 
 def test_already_done_handles_missing_file(tmp_path):
     assert already_done(str(tmp_path / "nope.jsonl")) == set()
+
+
+def test_build_body_disables_thinking():
+    body = build_body("qwen3-1.7b", "hello")
+    assert body["model"] == "qwen3-1.7b"
+    assert body["messages"] == [{"role": "user", "content": "hello"}]
+    assert body["max_tokens"] == 400
+    assert body["temperature"] == 0
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}

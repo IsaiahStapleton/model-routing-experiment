@@ -43,13 +43,20 @@ def already_done(path: str) -> set:
     return done
 
 
-def ask(tier: str, user_msg: str, key: str) -> dict:
-    body = {
+def build_body(tier: str, user_msg: str) -> dict:
+    return {
         "model": tier,
         "messages": [{"role": "user", "content": user_msg}],
         "max_tokens": MAX_ANSWER_TOKENS,
         "temperature": 0,
+        # Without this, hybrid-thinking tiers spend the whole answer-token
+        # budget reasoning and return empty content.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
+
+
+def ask(tier: str, user_msg: str, key: str) -> dict:
+    body = build_body(tier, user_msg)
     req = urllib.request.Request(
         f"{API_BASE}/chat/completions",
         data=json.dumps(body).encode(),
